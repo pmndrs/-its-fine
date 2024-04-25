@@ -1,4 +1,4 @@
-import * as React from 'react'
+import React from 'react'
 import type ReactReconciler from 'react-reconciler'
 
 /**
@@ -75,15 +75,17 @@ function wrapContext<T>(context: React.Context<T>): React.Context<T> {
   }
 }
 
-const error = console.error
-console.error = function () {
-  const message = [...arguments].join('')
-  if (message?.startsWith('Warning:') && message.includes('useContext')) {
-    console.error = error
-    return
-  }
+const NO_CONTEXT = {}
 
-  return error.apply(this, arguments as any)
+function readContextConcurrently<T>(context: React.Context<T>): T | typeof NO_CONTEXT {
+  // https://github.com/facebook/react/pull/28793
+  const readContext =
+    (React as any).use ??
+    (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED?.ReactCurrentDispatcher?.current?.readContext
+
+  if (typeof readContext === 'function') return readContext(wrapContext(context))
+
+  return NO_CONTEXT
 }
 
 const FiberContext = wrapContext(React.createContext<Fiber>(null!))
@@ -212,7 +214,10 @@ export function useContextMap(): ContextMap {
       const enableRenderableContext = node.type._context === undefined && node.type.Provider === node.type
       const context = enableRenderableContext ? node.type : node.type._context
       if (context && context !== FiberContext && !contextMap.has(context)) {
-        contextMap.set(context, React.useContext(wrapContext(context)))
+        const value = readContextConcurrently(context)
+        if (value === NO_CONTEXT) continue
+
+        contextMap.set(context, value)
       }
     }
 
